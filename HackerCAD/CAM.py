@@ -87,6 +87,7 @@ class Adaptive2d:
 
         self.plunge_feedrate = 100 # mm/min
         self.milling_feedrate = 100 # mm/min
+        self.rapid_feedrate = 1000 # mm/min
 
         self.motions = []
         
@@ -134,7 +135,7 @@ class Adaptive2d:
         def callback(something):
             return False # True stops processing
 
-        stock_path = [[[0,0],[100,0],[100,100],[0,100]]]
+        stock_path = [[[-1000,-1000],[1000,-1000],[1000,1000],[-1000,1000]]]
 
         path = [vertices]
         a2d_output = a2d.Execute(stock_path,path,callback)
@@ -149,6 +150,7 @@ class Adaptive2d:
         y = 0
         print("len(a2d_output):",len(a2d_output))
         regions = []
+        current_z_cut = 0.0 # TODO make a loop for multi depth operations
         for region in a2d_output:
             motions_region_i = []
             print("helix center point")
@@ -190,31 +192,80 @@ class Adaptive2d:
 
             v_now = v1
 
-            """
             PATH_TYPE = {0:"Cutting",
                         1:"LinkClear",
                         2:"LinkNotClear",
                         3:"LinkClearAtPrevPass"}
 
             for path_type,points in region.AdaptivePaths:
-                print(PATH_TYPE[path_type])
                 if PATH_TYPE[path_type] == "Cutting":
-                    print("    first point",points[0])
-                    print("    last point",points[-1])
-                    print("    total points",len(points))
-                elif PATH_TYPE[path_type] == "LinkClear":
-                    if len(points) > 0:
-                        print("    first point",points[0])
-                        print("    last point",points[-1])
-                        print("    total points",len(points))
+                    # handle the first point
+                    x,y = points[0]
+                    # choose feedrate
+                    if (v_now.Z() - current_z_cut) > 1e-3:
+                        feedrate = self.rapid_feedrate
                     else:
-                        print("    empty")
-                elif PATH_TYPE[path_type] == "LinkNotClear":
-                    print("    first point",points[0])
-                    print("    last point",points[-1])
-                    print("    total points",len(points))
+                        feedrate = self.milling_feedrate
+
+                    v_next = gp_Vec(x,y,v_now.Z())
+                    if (v_now - v_next).Magnitude() > 1e-6:
+                        me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
+                                                     gp_Pnt(v_next.XYZ()))
+                        mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
+                        motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),feedrate))
+                        mw.Add(me.Edge())
+                        v_now = v_next
+
+                    if v_now.Z() != current_z_cut:
+                        v_next = gp_Vec(x,y,current_z_cut)
+                        me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
+                                                     gp_Pnt(v_next.XYZ()))
+                        mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
+                        motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.plunge_feedrate))
+                        v_now = v_next
+                        mw.Add(me.Edge())
+                        
+                    # handle the rest of the points
+                    for x,y in points[1:]:
+                        v_next = gp_Vec(x,y,current_z_cut)
+                        me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
+                                                     gp_Pnt(v_next.XYZ()))
+                        mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
+                        motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.milling_feedrate))
+                        v_now = v_next
+                        mw.Add(me.Edge())
+
+                elif (PATH_TYPE[path_type] == "LinkClear") or (PATH_TYPE[path_type] == "LinkNotClear"):
+                    if (PATH_TYPE[path_type] == "LinkClear"):
+                        z = current_z_cut + self.z_link_clear
+                    else:
+                        z = self.z_clearance
+
+                    if v_now.Z() != z:
+                        if v_now.Z() >= z:
+                            feedrate = self.plunge_feedrate
+                        else:
+                            feedrate = self.rapid_feedrate
+                        v_next = gp_Vec(v_now.X(),v_now.Y(),z)
+                        me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
+                                                     gp_Pnt(v_next.XYZ()))
+                        mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
+                        motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.plunge_feedrate))
+                        v_now = v_next
+                        mw.Add(me.Edge())
+
+                    if len(points) > 0:
+                        # go to each point
+                        for x,y in points[1:]:
+                            v_next = gp_Vec(x,y,current_z_cut)
+                            me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
+                                                         gp_Pnt(v_next.XYZ()))
+                            mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
+                            motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.rapid_feedrate))
+                            v_now = v_next
+                            mw.Add(me.Edge())
                 else:
-                    print("    not implemented")
+                    raise Warning("path type not implemented")
 
 
             """
@@ -243,8 +294,12 @@ class Adaptive2d:
 
             print("n_not_skipped:{}".format(n_not_skipped))
             print("n_skipped:{}".format(n_skipped))
+        """
+
+            self.motions.append(motions_region_i)
         mt = BRepBuilderAPI_Transform(mw.Wire(),trsf_inv)
-        return mt.Shape()
+        self.wire = mt.Shape()
+        return self.wire
 
 
 
