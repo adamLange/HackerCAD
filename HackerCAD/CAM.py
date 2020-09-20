@@ -128,7 +128,7 @@ class Adaptive2d:
 
         a2d = area.Adaptive2d()
         a2d.tolerance = self.tolerance
-        a2d.opType
+        a2d.opType = area.AdaptiveOperationType.ProfilingInside
         a2d.stockToLeave = self.stockToLeave
         a2d.toolDiameter = self.tool_diameter
         a2d.helixRampDiameter = self.helix_diameter
@@ -193,6 +193,7 @@ class Adaptive2d:
 
             v_now = v1
 
+            """
             PATH_TYPE = {0:"Cutting",
                         1:"LinkClear",
                         2:"LinkNotClear",
@@ -247,8 +248,6 @@ class Adaptive2d:
             print("n_skipped:{}".format(n_skipped))
         mt = BRepBuilderAPI_Transform(mw.Wire(),trsf_inv)
         return mt.Shape()
-            """
-        return
 
 
 
