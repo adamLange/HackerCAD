@@ -119,16 +119,13 @@ class Adaptive2d:
                 else:
                     v_old = v_new
                     v_new = gp_Vec(x,y,z)
-                    if (v_new - v_old).Magnitude() >= 1e-5:
-                        need_vertex = True
-                    else:
-                        need_vertex = False
+                    need_vertex = True
                 if need_vertex:
                     vertices.append(tess.GetEdgeVertex(i_edge,i_vertex))
 
         a2d = area.Adaptive2d()
         a2d.tolerance = self.tolerance
-        a2d.opType = area.AdaptiveOperationType.ProfilingInside
+        a2d.opType = area.AdaptiveOperationType.ClearingInside
         a2d.stockToLeave = self.stockToLeave
         a2d.toolDiameter = self.tool_diameter
         a2d.helixRampDiameter = self.helix_diameter
