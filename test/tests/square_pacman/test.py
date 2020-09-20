@@ -26,6 +26,8 @@ class TestAdaptive(unittest.TestCase):
         square_pacman = t.faces().__next__()
 
         hacker_a2d = HackerCAD.Adaptive2d(square_pacman)
+        hacker_a2d.step_over_factor = 0.9
+        hacker_a2d.z_lift_distance = 0.0
         wire = hacker_a2d.compute()
 
         breptools_Write(wire,"output/adaptive.brep")

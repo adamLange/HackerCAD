@@ -46,7 +46,7 @@ def trsf_from_Ax2(ax2):
 
 class Adaptive2dMotion:
 
-  def __init__(self,a2d,edge):
+  def __init__(self,a2d,edge,feedrate):
       """
       a2d is an instance onf Adaptive2d
       edge is the TopoDS_Edge defining the tool tip position
@@ -54,6 +54,8 @@ class Adaptive2dMotion:
       self.a2d = a2d
       self.edge = edge
       self.curve = BRepAdaptor_Curve(edge)
+
+      self.feedrate = feedrate # mm / min
 
   def evaluate(self,u):
       v_tip = gp_Vec(self.curve.Value(u).XYZ())
@@ -72,12 +74,19 @@ class Adaptive2d:
             self.ax = ax2
 
         self.tesselation_mesh_quality = 0.1
-        self.z_lift_distance = 1.0
+        self.tolerance = 0.0001
+        #self.z_lift_distance = 1.0
+        self.z_link_clear = 0.0
+        self.z_clearance = 10.0
         self.helix_angle = 15.0 # degrees
         self.helix_diameter = 4.0 # must be <= tool diameter
         self.tool_diameter = 5.0
         self.depth = 10.0
         self.step_over_factor = 0.5
+        self.stockToLeave = 0.0
+
+        self.plunge_feedrate = 100 # mm/min
+        self.milling_feedrate = 100 # mm/min
 
         self.motions = []
         
@@ -118,9 +127,9 @@ class Adaptive2d:
                     vertices.append(tess.GetEdgeVertex(i_edge,i_vertex))
 
         a2d = area.Adaptive2d()
-        a2d.tolerance
+        a2d.tolerance = self.tolerance
         a2d.opType
-        a2d.stockToLeave
+        a2d.stockToLeave = self.stockToLeave
         a2d.toolDiameter = self.tool_diameter
         a2d.helixRampDiameter = self.helix_diameter
         a2d.stepOverFactor = self.step_over_factor
@@ -141,11 +150,14 @@ class Adaptive2d:
 
         x = 0
         y = 0
-        for o_i in a2d_output:
+        print("len(a2d_output):",len(a2d_output))
+        regions = []
+        for region in a2d_output:
+            motions_region_i = []
             print("helix center point")
-            x, y = o_i.HelixCenterPoint
+            x, y = region.HelixCenterPoint
             # peek at first point
-            motion_type,path_i = o_i.AdaptivePaths[0]
+            motion_type,path_i = region.AdaptivePaths[0]
             x_peek, y_peek = path_i[0]
 
             ax = gp_Ax2(gp_Pnt(x,y,0),gp_Dir(0,0,1),gp_Dir(x_peek-x,y_peek-y,0))
@@ -164,7 +176,7 @@ class Adaptive2d:
             v1 = gp_Vec(curve.Value(curve.LastParameter()).XYZ())
             mw.Add(helixEdge)
             mt = BRepBuilderAPI_Transform(helixEdge,trsf_inv)
-            self.motions.append(Adaptive2dMotion(self,mt.Shape()))
+            motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.plunge_feedrate))
             v_now = v1
 
             # add circle at bottom
@@ -174,31 +186,114 @@ class Adaptive2d:
             circleEdge = BRepBuilderAPI_MakeEdge(segment.Value(),Geom_CylindricalSurface(cyl)).Edge()
             mw.Add(circleEdge)
             mt = BRepBuilderAPI_Transform(circleEdge,trsf_inv)
-            self.motions.append(Adaptive2dMotion(self,mt.Shape()))
+            motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.plunge_feedrate))
 
             curve = BRepAdaptor_Curve(circleEdge)
             v1 = gp_Vec(curve.Value(curve.LastParameter()).XYZ())
 
             v_now = v1
 
-            for motion_type,path_i in o_i.AdaptivePaths:
+            PATH_TYPE = {0:"Cutting",
+                        1:"LinkClear",
+                        2:"LinkNotClear",
+                        3:"LinkClearAtPrevPass"}
+
+            for path_type,points in region.AdaptivePaths:
+                print(PATH_TYPE[path_type])
+                if PATH_TYPE[path_type] == "Cutting":
+                    print("    first point",points[0])
+                    print("    last point",points[-1])
+                    print("    total points",len(points))
+                elif PATH_TYPE[path_type] == "LinkClear":
+                    if len(points) > 0:
+                        print("    first point",points[0])
+                        print("    last point",points[-1])
+                        print("    total points",len(points))
+                    else:
+                        print("    empty")
+                elif PATH_TYPE[path_type] == "LinkNotClear":
+                    print("    first point",points[0])
+                    print("    last point",points[-1])
+                    print("    total points",len(points))
+                else:
+                    print("    not implemented")
+
+
+            """
+            n_not_skipped = 0
+            n_skipped = 0
+            for motion_type,path_i in region.AdaptivePaths:
                 if (motion_type == 1):
                     z = self.z_lift_distance 
                 else:
                     z = 0.0
                 for x,y in path_i:
                     v_next = gp_Vec(x,y,z)
-                    if (v_next - v_now).Magnitude() <= 1e-6:
+                    if not (v_next - v_now).Magnitude() <= 1e-9:
+                        n_not_skipped += 1
+                    else:
                         #raise Warning("v:  !")
-                        print("skipped a point because |v_next - v_now| <= 1e-6")
+                        #print("skipped a point because |v_next - v_now| <= 1e-9")
+                        #print("x:{}, y:{}".format(x,y))
+                        n_skipped += 1
                         continue
                     me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),gp_Pnt(v_next.XYZ()))
                     mw.Add(me.Edge())
                     mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
-                    self.motions.append(Adaptive2dMotion(self,mt.Shape()))
+                    motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.milling_feedrate))
                     v_now = v_next
 
-
-
+            print("n_not_skipped:{}".format(n_not_skipped))
+            print("n_skipped:{}".format(n_skipped))
         mt = BRepBuilderAPI_Transform(mw.Wire(),trsf_inv)
         return mt.Shape()
+            """
+        return
+
+
+
+class RuledMotion:
+
+    "Motion from a tip edge and a shank edge"
+
+    def __init__(self,tip_edge,shank_edge):
+
+        self.tip_curve =   BRepAdaptor_Curve(tip_edge)
+        self.shank_curve = BRepAdaptor_Curve(shank_edge)
+        self.curve = self.tip_curve
+
+        self.u_tip_min = self.tip_curve.FirstParameter()
+        self.u_tip_max = self.tip_curve.LastParameter()
+        self.du_tip = self.u_tip_max - self.u_tip_min
+
+        self.u_shank_min = self.shank_curve.FirstParameter()
+        self.u_shank_max = self.shank_curve.LastParameter()
+        self.du_shank = self.u_shank_max - self.u_shank_min
+
+        self.dshank_dtip = self.du_shank / self.du_tip
+
+        self.feedrate = 100
+
+        self.surface_normal_offset = 0.0
+        self.tool_axis_offset = 0.0 # + makes the tool go deeper
+
+    def evaluate(self,u):
+
+        u_star = (u - self.u_tip_min) * self.dshank_dtip + self.u_shank_min
+
+        pnt_tip = gp_Pnt()
+        dP_dutip = gp_Vec()  # P is for position
+        self.tip_curve.D1(u,pnt_tip,dP_dutip)
+
+        #v_tip   = gp_Vec(self.tip_curve.Value(u).XYZ())
+        v_tip = gp_Vec(pnt_tip.XYZ())
+        v_shank = gp_Vec(self.shank_curve.Value(u_star).XYZ())
+
+        v_tip_to_shank = (v_shank - v_tip).Normalized()
+
+        v_normal_offset = dP_dutip.Crossed(v_tip_to_shank).Normalized()*self.surface_normal_offset
+        v_tool_axis_offset = v_tip_to_shank.Normalized()*-self.tool_axis_offset
+
+        v_tip = v_tip + v_normal_offset + v_tool_axis_offset
+
+        return v_tip,v_tip_to_shank
