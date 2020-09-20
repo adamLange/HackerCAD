@@ -77,11 +77,11 @@ class Adaptive2d:
         self.tolerance = 0.0001
         #self.z_lift_distance = 1.0
         self.z_link_clear = 0.0
-        self.z_clearance = 10.0
+        self.z_clearance = 20.0
         self.helix_angle = 15.0 # degrees
         self.helix_diameter = 4.0 # must be <= tool diameter
         self.tool_diameter = 5.0
-        self.depth = 10.0
+        self.cut_depths = [10,5,0]
         self.step_over_factor = 0.5
         self.stockToLeave = 0.0
 
@@ -150,153 +150,156 @@ class Adaptive2d:
         y = 0
         print("len(a2d_output):",len(a2d_output))
         regions = []
-        current_z_cut = 0.0 # TODO make a loop for multi depth operations
-        for region in a2d_output:
-            motions_region_i = []
-            print("helix center point")
-            x, y = region.HelixCenterPoint
-            # peek at first point
-            motion_type,path_i = region.AdaptivePaths[0]
-            x_peek, y_peek = path_i[0]
+        for i_depth,current_z_cut in enumerate(self.cut_depths):
+            for region in a2d_output:
+                motions_region_i = []
+                print("helix center point")
+                x, y = region.HelixCenterPoint
+                # peek at first point
+                motion_type,path_i = region.AdaptivePaths[0]
+                x_peek, y_peek = path_i[0]
 
-            ax = gp_Ax2(gp_Pnt(x,y,0),gp_Dir(0,0,1),gp_Dir(x_peek-x,y_peek-y,0))
-            cyl = gp_Cylinder(gp_Ax3(ax),self.helix_diameter/2.0)
+                ax = gp_Ax2(gp_Pnt(x,y,current_z_cut),gp_Dir(0,0,1),gp_Dir(x_peek-x,y_peek-y,0))
+                cyl = gp_Cylinder(gp_Ax3(ax),self.helix_diameter/2.0)
 
-            dv_du = tan(radians(self.helix_angle))
-            du = self.depth / dv_du
-            dv = self.depth
-            dt = du/cos(radians(self.helix_angle))
-            aLine2d = gp_Lin2d(gp_Pnt2d(-du,dv),gp_Dir2d(du,-dv))
-            segment = GCE2d_MakeSegment(aLine2d,0,dt)
-            helixEdge = BRepBuilderAPI_MakeEdge(segment.Value(),Geom_CylindricalSurface(cyl)).Edge()
+                if i_depth == 0:
+                    dv = self.z_clearance - self.cut_depths[i_depth]
+                else:
+                    dv = self.cut_depths[i_depth - 1] - self.cut_depths[i_depth]
+                dv_du = tan(radians(self.helix_angle))
+                du = dv / dv_du
+                dt = du/cos(radians(self.helix_angle))
+                aLine2d = gp_Lin2d(gp_Pnt2d(-du,dv),gp_Dir2d(du,-dv))
+                segment = GCE2d_MakeSegment(aLine2d,0,dt)
+                helixEdge = BRepBuilderAPI_MakeEdge(segment.Value(),Geom_CylindricalSurface(cyl)).Edge()
 
-            curve = BRepAdaptor_Curve(helixEdge)
-            v0 = gp_Vec(curve.Value(curve.FirstParameter()).XYZ())
-            v1 = gp_Vec(curve.Value(curve.LastParameter()).XYZ())
-            mw.Add(helixEdge)
-            mt = BRepBuilderAPI_Transform(helixEdge,trsf_inv)
-            motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.plunge_feedrate))
-            v_now = v1
+                curve = BRepAdaptor_Curve(helixEdge)
+                v0 = gp_Vec(curve.Value(curve.FirstParameter()).XYZ())
+                v1 = gp_Vec(curve.Value(curve.LastParameter()).XYZ())
+                mw.Add(helixEdge)
+                mt = BRepBuilderAPI_Transform(helixEdge,trsf_inv)
+                motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.plunge_feedrate))
+                v_now = v1
 
-            # add circle at bottom
-            aLin2d = gp_Lin2d(gp_Pnt2d(0,0),gp_Dir2d(du,0))
-            dt = 2 * pi 
-            segment = GCE2d_MakeSegment(aLin2d,0,dt)
-            circleEdge = BRepBuilderAPI_MakeEdge(segment.Value(),Geom_CylindricalSurface(cyl)).Edge()
-            mw.Add(circleEdge)
-            mt = BRepBuilderAPI_Transform(circleEdge,trsf_inv)
-            motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.plunge_feedrate))
+                # add circle at bottom
+                aLin2d = gp_Lin2d(gp_Pnt2d(0,0),gp_Dir2d(du,0))
+                dt = 2 * pi 
+                segment = GCE2d_MakeSegment(aLin2d,0,dt)
+                circleEdge = BRepBuilderAPI_MakeEdge(segment.Value(),Geom_CylindricalSurface(cyl)).Edge()
+                mw.Add(circleEdge)
+                mt = BRepBuilderAPI_Transform(circleEdge,trsf_inv)
+                motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.plunge_feedrate))
 
-            curve = BRepAdaptor_Curve(circleEdge)
-            v1 = gp_Vec(curve.Value(curve.LastParameter()).XYZ())
+                curve = BRepAdaptor_Curve(circleEdge)
+                v1 = gp_Vec(curve.Value(curve.LastParameter()).XYZ())
 
-            v_now = v1
+                v_now = v1
 
-            PATH_TYPE = {0:"Cutting",
-                        1:"LinkClear",
-                        2:"LinkNotClear",
-                        3:"LinkClearAtPrevPass"}
+                PATH_TYPE = {0:"Cutting",
+                            1:"LinkClear",
+                            2:"LinkNotClear",
+                            3:"LinkClearAtPrevPass"}
 
-            for path_type,points in region.AdaptivePaths:
-                if PATH_TYPE[path_type] == "Cutting":
-                    # handle the first point
-                    x,y = points[0]
-                    # choose feedrate
-                    if (v_now.Z() - current_z_cut) > 1e-3:
-                        feedrate = self.rapid_feedrate
-                    else:
-                        feedrate = self.milling_feedrate
-
-                    v_next = gp_Vec(x,y,v_now.Z())
-                    if (v_now - v_next).Magnitude() > 1e-6:
-                        me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
-                                                     gp_Pnt(v_next.XYZ()))
-                        mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
-                        motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),feedrate))
-                        mw.Add(me.Edge())
-                        v_now = v_next
-
-                    if v_now.Z() != current_z_cut:
-                        v_next = gp_Vec(x,y,current_z_cut)
-                        me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
-                                                     gp_Pnt(v_next.XYZ()))
-                        mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
-                        motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.plunge_feedrate))
-                        v_now = v_next
-                        mw.Add(me.Edge())
-                        
-                    # handle the rest of the points
-                    for x,y in points[1:]:
-                        v_next = gp_Vec(x,y,current_z_cut)
-                        me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
-                                                     gp_Pnt(v_next.XYZ()))
-                        mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
-                        motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.milling_feedrate))
-                        v_now = v_next
-                        mw.Add(me.Edge())
-
-                elif (PATH_TYPE[path_type] == "LinkClear") or (PATH_TYPE[path_type] == "LinkNotClear"):
-                    if (PATH_TYPE[path_type] == "LinkClear"):
-                        z = current_z_cut + self.z_link_clear
-                    else:
-                        z = self.z_clearance
-
-                    if v_now.Z() != z:
-                        if v_now.Z() >= z:
-                            feedrate = self.plunge_feedrate
-                        else:
+                for path_type,points in region.AdaptivePaths:
+                    if PATH_TYPE[path_type] == "Cutting":
+                        # handle the first point
+                        x,y = points[0]
+                        # choose feedrate
+                        if (v_now.Z() - current_z_cut) > 1e-3:
                             feedrate = self.rapid_feedrate
-                        v_next = gp_Vec(v_now.X(),v_now.Y(),z)
-                        me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
-                                                     gp_Pnt(v_next.XYZ()))
-                        mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
-                        motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.plunge_feedrate))
-                        v_now = v_next
-                        mw.Add(me.Edge())
+                        else:
+                            feedrate = self.milling_feedrate
 
-                    if len(points) > 0:
-                        # go to each point
+                        v_next = gp_Vec(x,y,v_now.Z())
+                        if (v_now - v_next).Magnitude() > 1e-6:
+                            me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
+                                                         gp_Pnt(v_next.XYZ()))
+                            mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
+                            motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),feedrate))
+                            mw.Add(me.Edge())
+                            v_now = v_next
+
+                        if v_now.Z() != current_z_cut:
+                            v_next = gp_Vec(x,y,current_z_cut)
+                            me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
+                                                         gp_Pnt(v_next.XYZ()))
+                            mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
+                            motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.plunge_feedrate))
+                            v_now = v_next
+                            mw.Add(me.Edge())
+                            
+                        # handle the rest of the points
                         for x,y in points[1:]:
                             v_next = gp_Vec(x,y,current_z_cut)
                             me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
                                                          gp_Pnt(v_next.XYZ()))
                             mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
-                            motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.rapid_feedrate))
+                            motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.milling_feedrate))
                             v_now = v_next
                             mw.Add(me.Edge())
-                else:
-                    raise Warning("path type not implemented")
 
+                    elif (PATH_TYPE[path_type] == "LinkClear") or (PATH_TYPE[path_type] == "LinkNotClear"):
+                        if (PATH_TYPE[path_type] == "LinkClear"):
+                            z = current_z_cut + self.z_link_clear
+                        else:
+                            z = self.z_clearance
 
-            """
-            n_not_skipped = 0
-            n_skipped = 0
-            for motion_type,path_i in region.AdaptivePaths:
-                if (motion_type == 1):
-                    z = self.z_lift_distance 
-                else:
-                    z = 0.0
-                for x,y in path_i:
-                    v_next = gp_Vec(x,y,z)
-                    if not (v_next - v_now).Magnitude() <= 1e-9:
-                        n_not_skipped += 1
+                        if v_now.Z() != z:
+                            if v_now.Z() >= z:
+                                feedrate = self.plunge_feedrate
+                            else:
+                                feedrate = self.rapid_feedrate
+                            v_next = gp_Vec(v_now.X(),v_now.Y(),z)
+                            me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
+                                                         gp_Pnt(v_next.XYZ()))
+                            mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
+                            motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.plunge_feedrate))
+                            v_now = v_next
+                            mw.Add(me.Edge())
+
+                        if len(points) > 0:
+                            # go to each point
+                            for x,y in points[1:]:
+                                v_next = gp_Vec(x,y,current_z_cut)
+                                me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
+                                                             gp_Pnt(v_next.XYZ()))
+                                mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
+                                motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.rapid_feedrate))
+                                v_now = v_next
+                                mw.Add(me.Edge())
                     else:
-                        #raise Warning("v:  !")
-                        #print("skipped a point because |v_next - v_now| <= 1e-9")
-                        #print("x:{}, y:{}".format(x,y))
-                        n_skipped += 1
-                        continue
-                    me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),gp_Pnt(v_next.XYZ()))
-                    mw.Add(me.Edge())
-                    mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
-                    motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.milling_feedrate))
-                    v_now = v_next
+                        raise Warning("path type not implemented")
 
-            print("n_not_skipped:{}".format(n_not_skipped))
-            print("n_skipped:{}".format(n_skipped))
-        """
 
-            self.motions.append(motions_region_i)
+                """
+                n_not_skipped = 0
+                n_skipped = 0
+                for motion_type,path_i in region.AdaptivePaths:
+                    if (motion_type == 1):
+                        z = self.z_lift_distance 
+                    else:
+                        z = 0.0
+                    for x,y in path_i:
+                        v_next = gp_Vec(x,y,z)
+                        if not (v_next - v_now).Magnitude() <= 1e-9:
+                            n_not_skipped += 1
+                        else:
+                            #raise Warning("v:  !")
+                            #print("skipped a point because |v_next - v_now| <= 1e-9")
+                            #print("x:{}, y:{}".format(x,y))
+                            n_skipped += 1
+                            continue
+                        me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),gp_Pnt(v_next.XYZ()))
+                        mw.Add(me.Edge())
+                        mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
+                        motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.milling_feedrate))
+                        v_now = v_next
+
+                print("n_not_skipped:{}".format(n_not_skipped))
+                print("n_skipped:{}".format(n_skipped))
+            """
+
+                self.motions.append(motions_region_i)
         mt = BRepBuilderAPI_Transform(mw.Wire(),trsf_inv)
         self.wire = mt.Shape()
         return self.wire
