@@ -339,10 +339,16 @@ class RuledMotion:
 
         self.dshank_dtip = self.du_shank / self.du_tip
 
-        self.feedrate = 100
+        self.feedrate = 1000
 
         self.surface_normal_offset = 0.0
         self.tool_axis_offset = 0.0 # + makes the tool go deeper
+
+
+        self.use_trochoidal_offset = False
+        self.trochoidal_x = 5.0
+        self.trochoidal_y = 1.0
+        self.trochoidal_period = 0.1
 
     def evaluate(self,u):
 
@@ -362,5 +368,12 @@ class RuledMotion:
         v_tool_axis_offset = v_tip_to_shank.Normalized()*-self.tool_axis_offset
 
         v_tip = v_tip + v_normal_offset + v_tool_axis_offset
+
+        if self.use_trochoidal_offset:
+            x_mag = self.trochoidal_x * cos(u/self.trochoidal_period*2*pi)
+            y_mag = self.trochoidal_y * sin(u/self.trochoidal_period*2*pi)
+            v_x = (dP_dutip.Crossed(v_tip_to_shank)).Normalized() * x_mag
+            v_y = (dP_dutip).Normalized() * y_mag
+            v_tip = v_tip + v_x + v_y
 
         return v_tip,v_tip_to_shank
