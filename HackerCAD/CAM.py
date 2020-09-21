@@ -301,7 +301,7 @@ class Adaptive2d:
                         if len(points) > 0:
                             # go to each point
                             for x,y in points[1:]:
-                                v_next = gp_Vec(x,y,current_z_cut)
+                                v_next = gp_Vec(x,y,z)
                                 me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
                                                              gp_Pnt(v_next.XYZ()))
                                 mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
