@@ -150,9 +150,9 @@ class Adaptive2d:
         y = 0
         print("len(a2d_output):",len(a2d_output))
         regions = []
-        need_depth_to_depth_link = False
-        for i_depth,current_z_cut in enumerate(self.cut_depths):
-            for region in a2d_output:
+        for region in a2d_output:
+            need_depth_to_depth_link = False
+            for i_depth,current_z_cut in enumerate(self.cut_depths):
                 motions_region_i = []
                 print("helix center point")
                 x, y = region.HelixCenterPoint
@@ -180,21 +180,33 @@ class Adaptive2d:
 
                 if need_depth_to_depth_link:
                     # go up to clearance plane
+                    v_next = gp_Vec(v_now.X(),v_now.Y(),self.z_clearance)
                     me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
-                                                 gp_Pnt(v_now.X(),v_now.Y(),self.z_clearance))
+                                                 gp_Pnt(v_next.XYZ()))
                     mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
                     motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.rapid_feedrate))
                     mw.Add(me.Edge())
                     builder.Add(self.comp,me.Edge())
                     v_now = v_next
-                    # go to helix start
+                    # go to helix start xy
+                    v_next = gp_Vec(v0.X(),v0.Y(),v_now.Z())
                     me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
-                                                 gp_Pnt(v0.XYZ()))
+                                                 gp_Pnt(v_next.XYZ()))
                     mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
                     motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.rapid_feedrate))
                     mw.Add(me.Edge())
                     builder.Add(self.comp,me.Edge())
                     v_now = v_next
+                    # go to helix start xyz
+                    v_next = v0
+                    me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),
+                                                 gp_Pnt(v_next.XYZ()))
+                    mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
+                    motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.rapid_feedrate))
+                    mw.Add(me.Edge())
+                    builder.Add(self.comp,me.Edge())
+                    v_now = v_next
+
                 need_depth_to_depth_link = True
 
                 mw.Add(helixEdge)
@@ -299,35 +311,6 @@ class Adaptive2d:
                                 builder.Add(self.comp,me.Edge())
                     else:
                         raise Warning("path type not implemented")
-
-
-                """
-                n_not_skipped = 0
-                n_skipped = 0
-                for motion_type,path_i in region.AdaptivePaths:
-                    if (motion_type == 1):
-                        z = self.z_lift_distance 
-                    else:
-                        z = 0.0
-                    for x,y in path_i:
-                        v_next = gp_Vec(x,y,z)
-                        if not (v_next - v_now).Magnitude() <= 1e-9:
-                            n_not_skipped += 1
-                        else:
-                            #raise Warning("v:  !")
-                            #print("skipped a point because |v_next - v_now| <= 1e-9")
-                            #print("x:{}, y:{}".format(x,y))
-                            n_skipped += 1
-                            continue
-                        me = BRepBuilderAPI_MakeEdge(gp_Pnt(v_now.XYZ()),gp_Pnt(v_next.XYZ()))
-                        mw.Add(me.Edge())
-                        mt = BRepBuilderAPI_Transform(me.Edge(),trsf_inv)
-                        motions_region_i.append(Adaptive2dMotion(self,mt.Shape(),self.milling_feedrate))
-                        v_now = v_next
-
-                print("n_not_skipped:{}".format(n_not_skipped))
-                print("n_skipped:{}".format(n_skipped))
-            """
 
                 self.motions.append(motions_region_i)
         mt = BRepBuilderAPI_Transform(mw.Wire(),trsf_inv)
