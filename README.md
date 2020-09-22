@@ -11,7 +11,7 @@ HackerCAD is a library that I use to for generating gcode for my 5-axis PocketNC
   - [jupyter lab](https://jupyter.org/) (Optional. Nice for running HackerCAD interactively.) and the following extensions:
     - jupyter-js-widgets/extension
     - jupyter-threejs/extension
-  - [modelIKa](https://github.com/adamLange/modelIKa)
+  - [modelIKa](https://github.com/adamLange/modelIKa).  You can read more about modelIKa [here](https://hackaday.io/project/169499-solving-inverse-kinematics-with-modelica).
 
 ## Installing
 
